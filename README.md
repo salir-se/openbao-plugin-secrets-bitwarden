@@ -13,6 +13,45 @@ Bitwarden apps, browser extensions or the CLI see the current value without
 anyone copying it by hand. Nothing is ever read back from Bitwarden into
 OpenBao.
 
+## What it is for
+
+The jobs this plugin is built for, and how it does each one:
+
+1. **When a developer needs a credential, I want to share it without sending
+   it over chat or giving them access to OpenBao, and rotate it at any moment,
+   so that they always have the current value and nothing else.** An Admin
+   maps a KV secret to an item in a collection the Developer can only read. A
+   new value written to OpenBao reaches the item on the next sync, or at once
+   with `bao write -f bitwarden/sync/:name`.
+2. **When a credential is rotated by a job, I want the copy people use to
+   follow, so that nobody works from a stale password.** Periodic sync
+   re-checks every role and pushes only the secrets whose KV data changed.
+3. **When people need shared credentials, I want them to use the tools they
+   already have, so that I do not issue them OpenBao tokens or policies.**
+   They read the items in Bitwarden apps, the browser extension or `bw`, with
+   their own account.
+4. **When a value exists in two places, I want one of them to win, so that
+   there is a single source of truth.** OpenBao is authoritative: an edit made
+   in the vault is overwritten by the next sync, and nothing flows back.
+5. **When a secret must be withdrawn, I want one action to remove it, so that
+   it does not linger in the vault.** Deleting the role deletes the item for
+   every member. Who can read a collection is managed in Bitwarden.
+6. **When I am asked what is shared with people, I want an inventory.**
+   `roles/`, `sync/` and `status` show which secrets are published and when
+   each was last synced.
+
+The plugin propagates a rotation; it does not rotate anything itself. Change
+the credential at the target system and write the new value to OpenBao. The
+old value then disappears from the vault item, but whoever copied it earlier
+still has it until the target system stops accepting it.
+
+Not goals: two-way sync, replacing OpenBao dynamic secrets for workloads, and
+sharing with people outside the organization.
+
+All six are exercised by the [end-to-end suite](docs/e2e.md), apart from
+changing who can read a collection. Team practices built on them are in
+[docs/way-of-working.md](docs/way-of-working.md).
+
 ## Status and compatibility
 
 - This is an independent, community-maintained external plugin, released from
@@ -103,6 +142,29 @@ Every item field (name, notes, username, password, URIs, custom field names
 and values) is encrypted separately before it leaves OpenBao. Organization
 items use the organization key, personal items the user key.
 
+## Prerequisites
+
+The setup below assumes that these are already in place:
+
+- OpenBao is installed, initialized and unsealed, and the `bao` CLI can reach
+  it with a token that may manage plugins, mounts and policies.
+- A Bitwarden-compatible server (tested with Vaultwarden) is running behind
+  `https://`, and the Bitwarden CLI `bw` is configured for it.
+
+Confirm it:
+
+```bash
+bao status          # Sealed: false
+bao token lookup    # the token you expect, with the policies you expect
+bw config server    # prints your server URL, not bitwarden.com
+bw status           # "serverUrl" is your server
+```
+
+Installing the servers and CLIs and connecting them is covered, with links to
+the official documentation, in [docs/prerequisites.md](docs/prerequisites.md).
+To try everything on one machine without installing anything but Docker, use
+the [end-to-end environment](docs/e2e.md): `make e2e-up`.
+
 ## Install
 
 ### From a release
@@ -190,9 +252,118 @@ static.
 
 The mount path is your choice. This documentation uses `bitwarden/`.
 
-## Before you set up: current limits
+## Recommended setup
 
-Version 0.1 has limits that affect how you should set it up. Each one links to
+Sync into an organization, with three separate identities. This is the
+configuration the [end-to-end environment](docs/e2e.md) builds and tests.
+
+| Identity | Who holds its master password | In Bitwarden | In OpenBao |
+|----------|-------------------------------|--------------|------------|
+| **Admin** (human) | The Admin | Owns the organization; manages collections and members | Administers the plugin mount: `config`, `roles/*`, `sync/*` |
+| **Sync account** (not a person) | Only OpenBao: stored in `bitwarden/config`, never returned on read | Member with the *User* role and edit access to the target collections | None. The plugin logs in as this account |
+| **Developer** (human) | The Developer | Own account and personal vault, plus read-only access to the shared collections | None needed to read shared secrets, and no policy on the plugin mount |
+
+```mermaid
+flowchart LR
+    subgraph bao["OpenBao"]
+        kv[("KV secrets")]
+        plugin["plugin mount<br/>holds the sync account's<br/>master password"]
+    end
+    subgraph org["Bitwarden organization"]
+        col[("Collection<br/>synced items")]
+    end
+    admin(["Admin<br/>own master password"])
+    sync(["Sync account"])
+    dev(["Developer<br/>own master password"])
+
+    admin -- "config, roles, sync" --> plugin
+    admin -- "owns: members, collections" --> org
+    kv -- "read with scoped bao_token" --> plugin
+    plugin -- "logs in as" --> sync
+    sync -- "create / update / delete items" --> col
+    col -- "read-only" --> dev
+```
+
+Why three: the organization survives the loss of the sync account or its
+password because a person owns it, and nobody needs the sync account's master
+password to read a secret, because every reader uses their own account.
+
+The rules that go with it:
+
+- Always set `organization_id` on `config` and `collection_ids` on each role.
+  Without `organization_id` items land in the sync account's personal vault,
+  where only someone logged in as the sync account can read them. That mode is
+  for testing.
+- Give the sync account PBKDF2 as its KDF, no two-step login and a long random
+  master password.
+- One credential per KV path, and dedicated collections for synced items.
+- Scope `bao_token` read-only to the synced paths. Give write access to
+  `roles/*` and `config` to Admins only.
+
+Tested with Vaultwarden 1.35.4: the *User* role with edit access to a
+collection is enough to create, update and delete its items. Listing
+collections through `collections/` needs the *Admin* or *Owner* role, so with
+a *User* sync account take the collection ID from `bw` or the web vault. The
+official Bitwarden server is untested.
+
+In short, once the organization, the collection and the three accounts exist
+(step by step in [docs/recommended-setup.md](docs/recommended-setup.md)):
+
+```bash
+# 1. A token the plugin uses to read the source secrets. List only the paths
+#    you sync: role authors can reach everything this token can read.
+bao policy write bitwarden-sync-read - <<'EOF'
+path "secret/data/shared/*" {
+  capabilities = ["read"]
+}
+EOF
+SYNC_TOKEN=$(bao token create -orphan -policy=bitwarden-sync-read -period=768h -field=token)
+
+# 2. Connect the plugin to the vault as the sync account.
+bao write bitwarden/config \
+    url="https://vault.example.com" \
+    email="sync-bot@example.com" \
+    password="<sync account master password>" \
+    organization_id="<organization uuid>" \
+    bao_addr="https://openbao.example.com:8200" \
+    bao_token="$SYNC_TOKEN" \
+    sync_interval="10m"
+
+# 3. Check connectivity and login.
+bao read bitwarden/status
+
+# 4. The secret in OpenBao (KV v2 mounted at secret/).
+bao kv put secret/shared/grafana \
+    username="admin" password="s3cret" url="https://grafana.example.com"
+
+# 5. Map it to a vault item. KV v2 paths need the data/ segment.
+bao write bitwarden/roles/grafana \
+    source_path="secret/data/shared/grafana" \
+    cipher_name="Grafana admin" \
+    user_field="username" pass_field="password" url_field="url" \
+    collection_ids="<collection uuid>" \
+    notes_template="Managed by OpenBao. Edits here are overwritten."
+
+# 6. Push it now, then inspect.
+bao write -f bitwarden/sync/grafana
+bao read bitwarden/sync/grafana
+```
+
+The Developer then runs `bw sync` and `bw get password "Grafana admin"`, or
+opens the item in the browser extension.
+
+After a rotation, `bao kv patch secret/shared/grafana password=...` is enough:
+the next periodic cycle pushes the change. Run
+`bao write -f bitwarden/sync/grafana` to push immediately, or
+`bao write -f bitwarden/sync` to push every role.
+
+How to run this as a team (who may write what, rotation, incidents, CI/CD) is
+in [docs/way-of-working.md](docs/way-of-working.md). What the current version
+cannot do is listed below and in [SECURITY.md](SECURITY.md#known-limitations).
+
+## Current limits
+
+Version 0.1 has limits that shape the setup above. Each one links to
 its tracking issue; the full list is in
 [SECURITY.md](SECURITY.md#known-limitations).
 
@@ -206,59 +377,6 @@ its tracking issue; the full list is in
 | Only PBKDF2-SHA256 accounts without two-step login are supported | Create a dedicated sync account with PBKDF2 as its KDF and no second factor, and protect it with a long random master password. |
 | Tested against Vaultwarden only ([#7](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/7)) | Treat official Bitwarden server (cloud or self-hosted) as untested. |
 | Upgrading the binary needs a disable/enable cycle of the mount | Keep your `config` and role definitions in a script so you can re-apply them. See [docs/operations.md](docs/operations.md). |
-
-## Quick start
-
-The usual setup: a dedicated Bitwarden account owns an organization, the plugin
-writes items into that organization's collections, and the collections are
-shared read-only with the people who need the credentials.
-
-```bash
-# 1. A token the plugin uses to read the source secrets. List only the paths
-#    you sync: role authors can reach everything this token can read.
-bao policy write bitwarden-sync-read - <<'EOF'
-path "secret/data/grafana" {
-  capabilities = ["read"]
-}
-EOF
-SYNC_TOKEN=$(bao token create -policy=bitwarden-sync-read -period=768h -field=token)
-
-# 2. Connect the plugin to the vault.
-bao write bitwarden/config \
-    url="https://vault.example.com" \
-    email="sync-bot@example.com" \
-    password="<master password>" \
-    organization_id="<organization uuid>" \
-    bao_addr="https://openbao.example.com:8200" \
-    bao_token="$SYNC_TOKEN" \
-    sync_interval="10m"
-
-# 3. Check connectivity and login.
-bao read bitwarden/status
-
-# 4. Find the collection to publish into.
-bao list -format=json bitwarden/collections
-
-# 5. The secret in OpenBao (KV v2 mounted at secret/).
-bao kv put secret/grafana \
-    username="admin" password="s3cret" url="https://grafana.example.com"
-
-# 6. Map it to a vault item. KV v2 paths need the data/ segment.
-bao write bitwarden/roles/grafana \
-    source_path="secret/data/grafana" \
-    cipher_name="Grafana admin" \
-    user_field="username" pass_field="password" url_field="url" \
-    collection_ids="<collection uuid>" \
-    notes_template="Managed by OpenBao. Edits here are overwritten."
-
-# 7. Push it now, then inspect.
-bao write -f bitwarden/sync/grafana
-bao read bitwarden/sync/grafana
-```
-
-After a rotation, `bao kv put secret/grafana password=...` is enough: the next
-periodic cycle pushes the change. Run `bao write -f bitwarden/sync/grafana` to
-push immediately, or `bao write -f bitwarden/sync` to push every role.
 
 ## Configuration
 
@@ -279,9 +397,10 @@ keep their stored value.
 `sync_interval` is not validated on write. A value that does not parse as a Go
 duration silently disables periodic sync.
 
-Set `bao_token` if you use periodic sync. Without it the plugin falls back to
-the token of the request that triggered the sync, and a periodic run has no
-such request.
+Always set `bao_token`. Without it the plugin tries the token of the request
+that triggered the sync. A periodic run has no such request, and in the
+end-to-end test against OpenBao 2.5.1 a manual sync without `bao_token` was
+refused with `permission denied` as well.
 
 ## API
 
@@ -373,7 +492,8 @@ Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 | `secret not found at "..."` | Wrong `source_path`. For KV v2 it is `<mount>/data/<path>` |
 | `organization <id> not found or no key available` | The account is not a confirmed member of that organization, or its key could not be decrypted. Check the plugin log |
 | `status` shows `vaultwarden_reachable: false` | `<url>/alive` did not return 200 within 5 seconds. Check `url` and the network path from the OpenBao host |
-| `bao list bitwarden/collections` prints nothing useful | The response is not a key list. Use `-format=json` |
+| `bao list bitwarden/collections` prints `{}` or nothing | The response is not a key list, and the `bao` CLI (tested: 2.5.1) cannot print it. Call the API: `curl -X LIST -H "X-Vault-Token: $BAO_TOKEN" $BAO_ADDR/v1/bitwarden/collections` |
+| `listing collections: list collections returned status 401` (or 404) | The sync account is not an organization Admin or Owner. Syncing is not affected. Take collection IDs from `bw list org-collections` |
 | Plugin fails to start after install | Usually a dynamically linked binary. Rebuild with `CGO_ENABLED=0`, and check the registered SHA-256 matches the file |
 | Old behaviour after replacing the binary | See the upgrade procedure in [docs/operations.md](docs/operations.md) |
 
@@ -386,6 +506,8 @@ state, is in [docs/operations.md](docs/operations.md).
 make build             # static plugin binary
 make test              # unit tests, no external services
 make test-integration  # OpenBao + Vaultwarden in Docker, then go test -tags integration
+make e2e-test          # the plugin loaded into a real OpenBao, checked with the bw CLI
+make e2e-up            # the same environment, left running to try things by hand
 make cover             # unit tests with the coverage gate
 make lint
 make sha256            # SHA-256 of the built binary, for bao plugin register
@@ -399,8 +521,13 @@ Unit tests mock the Bitwarden API over `httptest`. Integration tests
 (`scripts/integration-test.sh`, `docker-compose.test.yml`) start throwaway
 OpenBao and Vaultwarden containers on ports 18200 and 18080, register a test
 account, and exercise login, key derivation, item create/update/delete and the
-sync flow against a personal vault. Organization and collection handling is
-covered by unit tests only.
+sync flow against a personal vault. They call the plugin's Go code in-process.
+
+End-to-end tests (`e2e/`, [docs/e2e.md](docs/e2e.md)) build the plugin into an
+OpenBao image, register and mount it, and start Vaultwarden behind HTTPS with
+an organization, a collection and three accounts. The suite drives the plugin
+with the `bao` CLI and checks every result with the Bitwarden CLI, logged in
+as a read-only member. `make e2e-shell` opens a shell with both CLIs.
 
 ## Contributing
 

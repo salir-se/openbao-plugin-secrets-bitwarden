@@ -116,7 +116,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: go vet
-        run: go vet -tags integration ./...
+        run: go vet -tags integration,e2e ./...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -212,6 +212,23 @@ jobs:
       # `go test -tags integration`, and tears the containers down again.
       - name: Run integration tests
         run: ./scripts/integration-test.sh
+
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Builds the plugin from this commit into an OpenBao image, starts it
+      # next to Vaultwarden (e2e/compose.yaml), drives the plugin with the
+      # `bao` CLI and checks the result with the Bitwarden CLI. Everything,
+      # including the Go build, happens in containers, so no Go toolchain is
+      # set up here. Containers and volumes are removed afterwards.
+      - name: Run end-to-end tests
+        run: make e2e-test
 
   govulncheck:
     name: govulncheck
