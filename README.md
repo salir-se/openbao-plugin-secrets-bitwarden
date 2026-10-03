@@ -158,6 +158,23 @@ static.
 
 The mount path is your choice. This documentation uses `bitwarden/`.
 
+## Before you set up: current limits
+
+Version 0.1 has limits that affect how you should set it up. Each one links to
+its tracking issue; the full list is in
+[SECURITY.md](SECURITY.md#known-limitations).
+
+| Limit | What it means for your setup |
+|-------|------------------------------|
+| Source secrets are read with the configured `bao_token`, not the caller's token, and `source_path` is not restricted ([#1](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/1)) | Whoever can write `roles/*` on the mount can copy anything that token can read into a collection. Scope the token's policy to the exact paths you sync, and give write access to `roles/*` and `config` to administrators only. |
+| Every unmapped key of the source secret becomes a visible custom field ([#2](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/2)) | Keep one credential per KV path. Do not point a role at a secret that also holds keys the collection's members must not see. |
+| A role without a stored `cipher_id` adopts existing items by name and permanently deletes other items with the same name ([#3](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/3)) | Sync into dedicated collections, and choose `cipher_name` values that cannot collide with manually managed items. |
+| A failed update creates a new item instead of returning the error ([#4](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/4)) | After a server outage, check the collection for duplicates. |
+| `url` accepts `http://`, there is no custom CA option, and endpoint changes keep the stored credentials ([#5](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/5)) | Use `https://` URLs, install a private CA in the system trust store of the OpenBao host, and re-enter `password` and `bao_token` whenever you change `url` or `bao_addr`. |
+| Only PBKDF2-SHA256 accounts without two-step login are supported | Create a dedicated sync account with PBKDF2 as its KDF and no second factor, and protect it with a long random master password. |
+| Tested against Vaultwarden only ([#7](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues/7)) | Treat official Bitwarden server (cloud or self-hosted) as untested. |
+| Upgrading the binary needs a disable/enable cycle of the mount | Keep your `config` and role definitions in a script so you can re-apply them. See [docs/operations.md](docs/operations.md). |
+
 ## Quick start
 
 The usual setup: a dedicated Bitwarden account owns an organization, the plugin
@@ -165,9 +182,10 @@ writes items into that organization's collections, and the collections are
 shared read-only with the people who need the credentials.
 
 ```bash
-# 1. A token the plugin uses to read the source secrets (see Security).
+# 1. A token the plugin uses to read the source secrets. List only the paths
+#    you sync: role authors can reach everything this token can read.
 bao policy write bitwarden-sync-read - <<'EOF'
-path "secret/data/*" {
+path "secret/data/grafana" {
   capabilities = ["read"]
 }
 EOF
