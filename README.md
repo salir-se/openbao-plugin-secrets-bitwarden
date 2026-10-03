@@ -363,6 +363,14 @@ Bitwarden or Vaultwarden. Unlike OpenBao, this project accepts AI-assisted
 contributions when they are disclosed, reviewed and signed off by the
 submitter.
 
+## Contact
+
+For press, partnership and other public-relations enquiries, write to
+<sales@salir.se>. Use [GitHub issues](https://github.com/salir-se/openbao-plugin-secrets-bitwarden/issues)
+for bugs and feature requests, and the private channel in
+[SECURITY.md](SECURITY.md) for vulnerabilities; do not send vulnerability
+details by email.
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 artfulbits.se | salir.se project.

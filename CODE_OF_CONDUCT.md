@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through GitHub's private reporting, by using the "Report content" option on the offending issue, pull request or comment, or by contacting a maintainer of the [salir-se](https://github.com/salir-se) organization directly through their GitHub profile. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through GitHub's private reporting, by using the "Report content" option on the offending issue, pull request or comment, by contacting a maintainer of the [salir-se](https://github.com/salir-se) organization directly through their GitHub profile, or by email to <sales@salir.se>. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
