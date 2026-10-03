@@ -1,0 +1,5 @@
+# Tool versions for local development. Build, test and lint commands live in
+# the Makefile (`make help`); the Go version must match the `toolchain` line
+# in go.mod, which is what CI reads.
+[tools]
+go = "1.27.1"

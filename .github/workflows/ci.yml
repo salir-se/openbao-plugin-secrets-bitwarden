@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**" # backport branches, release/<major.minor>
+  pull_request:
+    branches:
+      - main
+      - "release/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Use exactly the toolchain setup-go installed; never download another one.
+  GOTOOLCHAIN: local
+
+jobs:
+  # Developer Certificate of Origin: every non-merge commit in the pull request
+  # must carry a `Signed-off-by:` trailer naming its author or committer.
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check Signed-off-by trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          lower() { tr '[:upper:]' '[:lower:]'; }
+          failed=0
+          checked=0
+          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
+            checked=$((checked + 1))
+            author="$(git show -s --format='%an <%ae>' "$sha" | lower)"
+            committer="$(git show -s --format='%cn <%ce>' "$sha" | lower)"
+            signoffs="$(git show -s --format='%(trailers:key=Signed-off-by,valueonly,unfold)' "$sha" | sed '/^[[:space:]]*$/d' | lower)"
+            subject="$(git show -s --format='%s' "$sha")"
+
+            ok=0
+            if printf '%s\n' "$signoffs" | grep -Fxq -e "$author" -e "$committer"; then
+              ok=1
+            # Dependabot authors commits as
+            #   dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
+            # but signs them off as
+            #   dependabot[bot] <support@github.com>
+            # so the trailer never matches the author. Accept exactly that pair.
+            elif [ "$author" = 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' ] &&
+              printf '%s\n' "$signoffs" | grep -Fxq 'dependabot[bot] <support@github.com>'; then
+              ok=1
+            fi
+
+            if [ "$ok" -eq 1 ]; then
+              echo "ok      ${sha:0:12} $subject"
+            else
+              failed=1
+              echo "::error::Commit ${sha:0:12} (\"$subject\") has no Signed-off-by trailer matching its author or committer."
+              echo "MISSING ${sha:0:12} $subject"
+              echo "        author:     $author"
+              echo "        committer:  $committer"
+              echo "        sign-offs:  ${signoffs:-<none>}"
+            fi
+          done
+
+          echo "Checked $checked commit(s)."
+          if [ "$failed" -ne 0 ]; then
+            echo
+            echo "Add the sign-off with 'git commit --amend --signoff' (last commit) or"
+            echo "'git rebase --signoff <base>' (whole branch), then force-push."
+            echo "The name and email in the trailer must match the commit author."
+            echo "See CONTRIBUTING.md and https://developercertificate.org/"
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-formatted:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: go vet
+        run: go vet -tags integration ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+
+  test:
+    name: Unit tests + coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # `make cover` runs the race-enabled unit tests with a coverage profile
+      # and fails if total coverage drops below the project threshold
+      # (scripts/check-coverage.sh). The threshold lives in the Makefile only.
+      - name: Unit tests + coverage gate
+        run: make cover
+
+      - name: Coverage summary
+        if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
+        run: |
+          {
+            echo '### Coverage'
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build static binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -ldflags='-s -w' \
+            -o "dist/openbao-plugin-secrets-bitwarden_${GOOS}_${GOARCH}" \
+            ./cmd/openbao-plugin-secrets-bitwarden
+
+      - name: Verify the binary is statically linked
+        if: matrix.goos == 'linux'
+        run: |
+          out="$(file "dist/openbao-plugin-secrets-bitwarden_linux_${{ matrix.goarch }}")"
+          echo "$out"
+          echo "$out" | grep -q 'statically linked'
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Starts OpenBao + Vaultwarden from docker-compose.test.yml, runs
+      # `go test -tags integration`, and tears the containers down again.
+      - name: Run integration tests
+        run: ./scripts/integration-test.sh
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Scans with the Go version from go.mod, i.e. the one releases are built
+      # with, so standard-library advisories are reported accurately.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

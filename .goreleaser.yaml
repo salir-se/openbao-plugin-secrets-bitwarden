@@ -1,0 +1,243 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: openbao-plugin-secrets-bitwarden
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: plugin
+    main: ./cmd/openbao-plugin-secrets-bitwarden
+    binary: openbao-plugin-secrets-bitwarden
+    # OpenBao plugins must be static binaries.
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Reproducible builds: no local paths, fixed timestamps, no build id.
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -buildid= -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: archive
+    ids:
+      - plugin
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Fixed metadata so the archives are reproducible too.
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info: &archive_file_info
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info: *archive_file_info
+  # The bare binary is published too, so that checksums.txt contains the exact
+  # SHA-256 that `bao plugin register -sha256=...` expects.
+  - id: binary
+    ids:
+      - plugin
+    formats:
+      - binary
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# SPDX SBOM per archive, named like the openbao/openbao-plugins release assets.
+# Needs `syft` on PATH (installed by the release workflow).
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.spdx.sbom.json"
+
+# Keyless cosign signature (GitHub OIDC, no stored keys) over checksums.txt,
+# which in turn covers every binary, archive and SBOM.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+# Multi-arch plugin image for OpenBao's declarative plugin install. In
+# snapshot mode GoReleaser builds one local image per platform and pushes
+# nothing.
+dockers_v2:
+  - id: image
+    ids:
+      - plugin
+    dockerfile: Containerfile
+    images:
+      - ghcr.io/salir-se/openbao-plugin-secrets-bitwarden
+    tags:
+      - "{{ .Tag }}"
+      # Pre-releases (v0.2.0-beta1, v0.2.0-rc1) never move `latest`.
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "OpenBao secrets engine plugin that syncs KV secrets to a Bitwarden-compatible server"
+      org.opencontainers.image.source: "https://github.com/salir-se/openbao-plugin-secrets-bitwarden"
+      org.opencontainers.image.url: "https://github.com/salir-se/openbao-plugin-secrets-bitwarden"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .CommitDate }}"
+      org.opencontainers.image.licenses: MIT
+
+# Keyless cosign signature on the pushed image, by digest.
+docker_signs:
+  - id: image
+    cmd: cosign
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - --yes
+    output: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+# Release notes are generated from Conventional Commit subjects and grouped in
+# the same categories CHANGELOG.md uses (OpenBao's): Changes, Features,
+# Improvements, Deprecations, Bugs. CHANGELOG.md stays the curated record.
+changelog:
+  use: git
+  sort: asc
+  groups:
+    # Anything marked breaking (`type!:` or `type(scope)!:`) needs operator action.
+    - title: "Changes"
+      regexp: '^.*?\w+(\([[:word:]/.-]+\))?!:.+$'
+      order: 0
+    - title: "Features"
+      regexp: '^.*?feat(\([[:word:]/.-]+\))?:.+$'
+      order: 1
+    - title: "Improvements"
+      regexp: '^.*?(improvement|perf)(\([[:word:]/.-]+\))?:.+$'
+      order: 2
+    - title: "Deprecations"
+      regexp: '^.*?deprecat(e|ion)(\([[:word:]/.-]+\))?:.+$'
+      order: 3
+    - title: "Bugs"
+      regexp: '^.*?(fix|sec|security)(\([[:word:]/.-]+\))?:.+$'
+      order: 4
+    - title: "Dependencies"
+      regexp: '^.*?(build|chore)\(deps[[:word:]/.-]*\):.+$'
+      order: 5
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - '^docs(\([[:word:]/.-]+\))?:'
+      - '^test(\([[:word:]/.-]+\))?:'
+      - '^ci(\([[:word:]/.-]+\))?:'
+      - '^style(\([[:word:]/.-]+\))?:'
+      - '^refactor(\([[:word:]/.-]+\))?:'
+      - '^chore:'
+      - '^Merge '
+
+release:
+  github:
+    owner: salir-se
+    name: openbao-plugin-secrets-bitwarden
+  prerelease: auto
+  footer: |
+    ## Verify
+
+    Every file here is listed in `checksums.txt`, which is signed with cosign
+    (keyless, GitHub OIDC) by this repository's release workflow:
+
+    ```sh
+    VERSION={{ .Version }}
+    PLATFORM=linux_amd64   # linux_arm64, darwin_amd64, darwin_arm64
+    BASE=https://github.com/salir-se/openbao-plugin-secrets-bitwarden/releases/download/{{ .Tag }}
+
+    curl -fsSLO "$BASE/openbao-plugin-secrets-bitwarden_${VERSION}_${PLATFORM}"
+    curl -fsSLO "$BASE/checksums.txt"
+    curl -fsSLO "$BASE/checksums.txt.sigstore.json"
+
+    # 1. checksums.txt was signed by the release workflow on this tag
+    cosign verify-blob checksums.txt \
+      --bundle checksums.txt.sigstore.json \
+      --certificate-identity "https://github.com/salir-se/openbao-plugin-secrets-bitwarden/.github/workflows/release.yml@refs/tags/{{ .Tag }}" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+    # 2. the download matches checksums.txt
+    sha256sum --ignore-missing -c checksums.txt
+
+    # 3. optional: SLSA build provenance
+    gh attestation verify "openbao-plugin-secrets-bitwarden_${VERSION}_${PLATFORM}" \
+      --repo salir-se/openbao-plugin-secrets-bitwarden
+    ```
+
+    The `.tar.gz` archives hold the same binary plus `LICENSE` and `README.md`;
+    each has an SPDX SBOM next to it (`*.spdx.sbom.json`).
+
+    ## Install from the container image (recommended)
+
+    The plugin is published as a multi-arch (linux/amd64, linux/arm64) OCI image:
+    `ghcr.io/salir-se/openbao-plugin-secrets-bitwarden:{{ .Tag }}`. The pinned
+    reference with its digest is at the end of these notes, or look it up and
+    verify the signature yourself:
+
+    ```sh
+    IMAGE=ghcr.io/salir-se/openbao-plugin-secrets-bitwarden
+    DIGEST=$(docker buildx imagetools inspect "$IMAGE:{{ .Tag }}" --format '{{ "{{json .Manifest.Digest}}" }}' | tr -d '"')
+
+    cosign verify "$IMAGE@$DIGEST" \
+      --certificate-identity "https://github.com/salir-se/openbao-plugin-secrets-bitwarden/.github/workflows/release.yml@refs/tags/{{ .Tag }}" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+    gh attestation verify "oci://$IMAGE@$DIGEST" --repo salir-se/openbao-plugin-secrets-bitwarden
+    ```
+
+    Declare it in the OpenBao server configuration, pinned by that digest:
+
+    ```hcl
+    plugin_auto_download = true
+
+    plugin "secret" "bitwarden" {
+      image = "ghcr.io/salir-se/openbao-plugin-secrets-bitwarden:{{ .Tag }}@sha256:<digest>"
+    }
+    ```
+
+    ## Install the binary by hand
+
+    Copy the verified binary into the OpenBao `plugin_directory` and register
+    it with its SHA-256, which must equal its entry in `checksums.txt`:
+
+    ```sh
+    install -m 0755 "openbao-plugin-secrets-bitwarden_${VERSION}_${PLATFORM}" \
+      /etc/openbao/plugins/openbao-plugin-secrets-bitwarden
+
+    SHA256=$(sha256sum /etc/openbao/plugins/openbao-plugin-secrets-bitwarden | cut -d' ' -f1)
+    bao plugin register -sha256="$SHA256" secret openbao-plugin-secrets-bitwarden
+    ```
+
+    Released under the MIT License.

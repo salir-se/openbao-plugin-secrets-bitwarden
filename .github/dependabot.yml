@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - dependencies
+    groups:
+      openbao:
+        patterns:
+          - "github.com/openbao/*"
+      go-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github.com/openbao/*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"

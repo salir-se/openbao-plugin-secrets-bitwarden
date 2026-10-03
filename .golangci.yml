@@ -1,0 +1,79 @@
+# golangci-lint v2 configuration.
+# Run locally with: golangci-lint run ./...
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint the docker-backed integration tests too, not just the unit tests.
+  build-tags:
+    - integration
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gosec
+    - misspell
+    - nilerr
+    - nolintlint
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*net/http.Response).Body.Close
+    gosec:
+      excludes:
+        # int -> byte conversions of small, already range-checked values
+        # (PKCS#7 padding lengths); the check cannot see the bounds.
+        - G115
+    staticcheck:
+      checks:
+        - all
+        # Quick-fix suggestion (fmt.Fprintf over Write+Sprintf), not a defect.
+        - -QF1012
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+    rules:
+      # The Bitwarden protocol mandates RSA-OAEP with SHA-1 for the
+      # organisation and user key envelopes. It is not a free choice here.
+      - path: crypto\.go
+        linters:
+          - gosec
+        text: "G505|G401"
+      # Helpers that take a block size for readability, always called with 16.
+      - linters:
+          - unparam
+        text: "always receives"
+      # Tests use fixed credentials, throwaway HTTP servers and unchecked
+      # helpers on purpose.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - unparam
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/salir-se/openbao-plugin-secrets-bitwarden
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

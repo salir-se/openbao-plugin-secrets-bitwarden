@@ -1,0 +1,28 @@
+# Build output
+/bin/
+/dist/
+/openbao-plugin-secrets-bitwarden
+*.exe
+*.test
+
+# Test and coverage artefacts
+coverage.out
+coverage.html
+*.coverprofile
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
