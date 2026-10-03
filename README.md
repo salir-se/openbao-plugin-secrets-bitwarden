@@ -38,11 +38,43 @@ OpenBao.
 
 ## How it works
 
+```mermaid
+flowchart LR
+    subgraph bao["OpenBao server"]
+        kv[("KV secrets<br/>source of truth")]
+        plugin["openbao-plugin-secrets-bitwarden<br/>roles, config, sync"]
+    end
+    subgraph bw["Bitwarden / Vaultwarden"]
+        col[("Organization<br/>collections")]
+    end
+    users["Browser extensions,<br/>desktop and mobile apps, CLI<br/>(read-only users)"]
+
+    kv -- "read with bao_token" --> plugin
+    plugin -- "encrypted items<br/>create / update / delete" --> col
+    col -- "shared read-only" --> users
 ```
-OpenBao KV  --read-->  openbao-plugin-secrets-bitwarden  --encrypted item-->  Bitwarden / Vaultwarden
-(source of truth)      (runs inside OpenBao)                        organization collections
-                                                                            |
-                                                              apps, extensions, CLI (read-only users)
+
+The flow is one-way: nothing is ever read back from the vault into OpenBao.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator or timer
+    participant P as Plugin
+    participant KV as OpenBao KV
+    participant BW as Bitwarden server
+
+    Op->>P: write sync/:name (or periodic tick)
+    P->>KV: read source_path with bao_token
+    KV-->>P: secret data
+    Note over P: build the item and encrypt every<br/>field with the organization key
+    alt role has a stored cipher_id
+        P->>BW: update item
+    else first sync
+        P->>BW: look up items named cipher_name
+        P->>BW: adopt the newest match, or create a new item
+    end
+    BW-->>P: item ID
+    Note over P: store cipher_id and sync time on the role
 ```
 
 1. A **role** maps one KV secret to one vault item: which KV fields become the
