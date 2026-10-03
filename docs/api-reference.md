@@ -33,7 +33,7 @@ logs in again.
 | `password` | string | yes | | Account master password. The account must use PBKDF2 |
 | `organization_id` | string | no | | Organization that owns synced items. When empty, items go to the account's personal vault and the `collections/` paths are unusable |
 | `bao_addr` | string | no | `http://127.0.0.1:8200` | OpenBao API address for reading source secrets |
-| `bao_token` | string | no | | OpenBao token for reading source secrets. When set, it is used for every source read instead of the caller's token. When empty, the token of the calling request is used |
+| `bao_token` | string | no | | OpenBao token for reading source secrets. When set, it is used for every source read instead of the caller's token. When empty, the plugin tries the token of the calling request; in the end-to-end test against OpenBao 2.5.1 that read was refused with `permission denied`, so set it |
 | `bao_tls_skip_verify` | bool | no | `false` | Skip TLS certificate verification for requests to `bao_addr` |
 | `sync_interval` | string | no | | Go duration (`10m`, `1h`). Empty, `0`, or a value that does not parse disables periodic sync |
 
@@ -210,13 +210,23 @@ Both paths require `organization_id`.
 | list | `collections/` | Returns `collections` (a list of `{id, name}` with decrypted names) and `total` |
 | write | `collections/:role/assign` | Replaces the collection assignment of the role's item with `collection_ids` and stores the same list on the role. The role must already be synced |
 
-`:role` is the role name, in lowercase. The response of `collections/` is not
-a standard key list, so read it with `bao list -format=json`.
+`:role` is the role name, in lowercase.
 
 ```bash
-bao list -format=json bitwarden/collections
+curl -X LIST -H "X-Vault-Token: $BAO_TOKEN" "$BAO_ADDR/v1/bitwarden/collections"
 bao write bitwarden/collections/grafana/assign collection_ids="<uuid-1>,<uuid-2>"
 ```
+
+Observed in the [end-to-end environment](e2e.md) (OpenBao 2.5.1, Vaultwarden
+1.35.4):
+
+- The response of `collections/` is not a standard key list. `bao list`, with
+  or without `-format=json`, prints `{}` or nothing and exits 2. Call the API
+  directly, as above.
+- `collections/` works only when the sync account is an organization *Admin*
+  or *Owner*. For a *User* the server answers 401, for a *Manager* 404.
+- `collections/:role/assign` fails with a 404 from the server for every
+  organization role. Set `collection_ids` on the role before its first sync.
 
 ## folders
 
@@ -225,7 +235,7 @@ encrypted with that account's user key, not the organization key.
 
 | Operation | Path | Behaviour |
 |-----------|------|-----------|
-| list | `folders/` | Returns `folders` (a list of `{id, name}` with decrypted names) and `total`. Use `-format=json` |
+| list | `folders/` | Returns `folders` (a list of `{id, name}` with decrypted names) and `total`. Like `collections/`, it is not a key list: `bao list` prints `{}` and exits 2, so call the API with `curl -X LIST` |
 | write | `folders/:name` | Creates a folder called `:name`. Returns `id` and `name`. Writing the same name twice creates two folders |
 | delete | `folders/:id` | Deletes the folder with that ID |
 

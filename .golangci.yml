@@ -4,9 +4,11 @@ version: "2"
 
 run:
   timeout: 5m
-  # Lint the docker-backed integration tests too, not just the unit tests.
+  # Lint the docker-backed integration tests and the e2e bootstrap program
+  # too, not just the unit tests.
   build-tags:
     - integration
+    - e2e
 
 linters:
   # errcheck, govet, ineffassign, staticcheck, unused

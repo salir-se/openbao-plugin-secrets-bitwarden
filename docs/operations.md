@@ -8,14 +8,15 @@ mounted at `bitwarden/`.
 1. Create a dedicated account for the plugin. Set its KDF to PBKDF2-SHA256 and
    leave two-step login off.
 2. Make it a member of the organization you sync into, with enough rights to
-   create, edit and delete items in the target collections. The plugin uses the
-   organization "admin" item endpoints. It has been run with an organization
-   owner account; lesser roles are untested.
+   create, edit and delete items in the target collections. Tested with
+   Vaultwarden 1.35.4: the *User* role with edit access to those collections
+   is enough. Listing collections through the plugin needs *Admin* or *Owner*.
+   See [recommended-setup.md](recommended-setup.md).
 3. Create the collections and share them read-only with the people or groups
    who need the credentials.
-4. Note the organization UUID (visible in the web vault URL) and the collection
-   UUIDs (`bao list -format=json bitwarden/collections` once the plugin is
-   configured).
+4. Note the organization UUID and the collection UUIDs. Both are visible in
+   the web vault URLs, and `bw list organizations` and
+   `bw list org-collections --organizationid <uuid>` print them.
 
 Items in those collections are overwritten on every sync. Tell readers not to
 edit them, for example through `notes_template`.

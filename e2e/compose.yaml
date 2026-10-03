@@ -1,0 +1,157 @@
+# End-to-end environment: a real OpenBao with the plugin built from this
+# checkout, a Vaultwarden server behind HTTPS, and a tools container with the
+# `bao` and `bw` CLIs. See docs/e2e.md.
+#
+#   make e2e-up      # build, start and configure everything
+#   make e2e-shell   # interactive shell with bao + bw
+#   make e2e-test    # automated suite (e2e/run.sh)
+#   make e2e-down    # remove containers and volumes
+#
+# Host ports are published on 127.0.0.1 only. Override them when they are
+# taken:
+#   E2E_OPENBAO_PORT=38200 E2E_VAULTWARDEN_PORT=38443 make e2e-up
+name: openbao-plugin-secrets-bitwarden-e2e
+
+# Every credential of this environment is defined here and nowhere else. They
+# are throwaway fixtures for containers that are published on localhost only.
+# Never reuse them.
+x-fixtures: &fixtures
+  # OpenBao dev-mode root token. Used by setup, the test suite and the tools
+  # shell. The plugin itself gets a scoped read-only token created by setup.
+  E2E_BAO_ROOT_TOKEN: &root-token e2e-root-token
+  # Admin: the human who owns the organization.
+  E2E_ADMIN_EMAIL: admin@e2e.example.com
+  E2E_ADMIN_PASSWORD: e2e-admin-master-password
+  # Account the plugin logs in as. Only OpenBao needs this password.
+  E2E_SYNC_EMAIL: sync-bot@e2e.example.com
+  E2E_SYNC_PASSWORD: e2e-sync-master-password
+  # Developer: a human with read-only access to the collections.
+  E2E_DEVELOPER_EMAIL: developer@e2e.example.com
+  E2E_DEVELOPER_PASSWORD: e2e-developer-master-password
+  E2E_VW_ORG_NAME: E2E Organization
+  # The first collection is the one roles sync into; the second exists for
+  # collections/:role/assign.
+  E2E_VW_COLLECTIONS: OpenBao Synced,OpenBao Secondary
+  # Organization role (owner, admin, manager, user) and collection access
+  # (manage, write, readonly, none) of the sync account. The defaults are the
+  # least privilege that syncing works with; see docs/e2e.md.
+  E2E_SYNC_MEMBER_TYPE: ${E2E_SYNC_MEMBER_TYPE:-user}
+  E2E_SYNC_COLLECTION_ACCESS: ${E2E_SYNC_COLLECTION_ACCESS:-write}
+
+# Addresses as seen from inside the compose network.
+x-endpoints: &endpoints
+  BAO_ADDR: http://openbao:8200
+  E2E_VW_URL: https://vaultwarden
+
+x-tools-image: &tools-image
+  image: openbao-plugin-secrets-bitwarden-e2e-tools
+  build:
+    context: ..
+    dockerfile: e2e/tools.Dockerfile
+
+services:
+  # One-shot: writes a throwaway CA and a server certificate for Vaultwarden.
+  # The CA private key is deleted as soon as the certificate is signed. Exits
+  # when done, so it has no healthcheck; dependants wait for exit code 0.
+  certs:
+    <<: *tools-image
+    command: ["/e2e/gen-certs.sh"]
+    volumes:
+      - tls:/tls
+      - state:/state
+
+  openbao:
+    image: openbao-plugin-secrets-bitwarden-e2e-openbao
+    build:
+      context: ..
+      dockerfile: e2e/openbao.Dockerfile
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    cap_add:
+      - IPC_LOCK
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: *root-token
+      BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      BAO_LOG_LEVEL: debug
+      # For `docker compose exec openbao bao ...`.
+      BAO_ADDR: http://127.0.0.1:8200
+    volumes:
+      - state:/state
+    ports:
+      - "127.0.0.1:${E2E_OPENBAO_PORT:-28200}:8200"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  vaultwarden:
+    image: vaultwarden/server:1.35.4-alpine@sha256:34b4e91ed4c2a4d2191245325608b2a84bedbeb9c9dd561e3c0924b98ef7126c
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    environment:
+      # Built-in TLS. The Bitwarden CLI refuses plain http:// servers.
+      ROCKET_TLS: '{certs="/tls/server.crt",key="/tls/server.key"}'
+      ROCKET_PORT: "443"
+      # The address a browser on the host uses for the web vault.
+      DOMAIN: https://localhost:${E2E_VAULTWARDEN_PORT:-28443}
+      SIGNUPS_ALLOWED: "true"
+      WEBSOCKET_ENABLED: "false"
+      # The suite logs in far more often than a person would.
+      LOGIN_RATELIMIT_MAX_BURST: "1000"
+      ADMIN_RATELIMIT_MAX_BURST: "1000"
+    volumes:
+      - tls:/tls:ro
+      - vaultwarden-data:/data
+    ports:
+      - "127.0.0.1:${E2E_VAULTWARDEN_PORT:-28443}:443"
+    healthcheck:
+      # Shipped with the image; speaks https when ROCKET_TLS is set.
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: creates the fixture accounts, organization and collections in
+  # Vaultwarden, registers and mounts the plugin in OpenBao, writes
+  # bitwarden/config and seeds KV secrets. Idempotent. Exits when done, so it
+  # has no healthcheck; dependants wait for exit code 0.
+  setup:
+    <<: *tools-image
+    command: ["/e2e/setup.sh"]
+    depends_on:
+      openbao:
+        condition: service_healthy
+      vaultwarden:
+        condition: service_healthy
+    environment:
+      <<: [*fixtures, *endpoints]
+    volumes:
+      - state:/state
+
+  # Interactive shell with both CLIs:
+  #   docker compose -f e2e/compose.yaml run --rm tools
+  tools:
+    <<: *tools-image
+    profiles: ["tools"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      <<: [*fixtures, *endpoints]
+    volumes:
+      - state:/state:ro
+    healthcheck:
+      test: ["CMD", "bao", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  # Server certificate and key; mounted into Vaultwarden only.
+  tls:
+  # CA certificate, plugin SHA-256 and the IDs produced by setup.
+  state:
+  vaultwarden-data:

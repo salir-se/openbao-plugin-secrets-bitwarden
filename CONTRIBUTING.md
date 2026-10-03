@@ -156,13 +156,15 @@ Documentation updates, test changes and refactors do not need an entry.
 ## Development setup
 
 You need the Go version named in `go.mod` or newer, `make`, and Docker with
-Compose v2 for the integration tests.
+Compose v2 for the integration and end-to-end tests.
 
 ```bash
 make build             # static plugin binary (CGO_ENABLED=0)
 make test              # unit tests, no external services
 make cover             # unit tests with the coverage gate
 make test-integration  # OpenBao + Vaultwarden in Docker
+make e2e-test          # plugin inside a real OpenBao, verified with the bw CLI
+make e2e-up            # same environment, left running; make e2e-shell, make e2e-down
 make lint
 make clean
 ```
@@ -179,6 +181,7 @@ make clean
 | `*_test.go` | Unit tests |
 | `integration_test.go`, `testhelpers_test.go` | Integration tests, behind the `integration` build tag |
 | `scripts/integration-test.sh`, `docker-compose.test.yml` | Integration test harness |
+| `e2e/` | End-to-end environment and suite ([docs/e2e.md](docs/e2e.md)). `e2e/bootstrap` is Go behind the `e2e` build tag, so it stays out of the coverage gate |
 | `docs/` | Reference and operations documentation |
 
 ### Tests and the coverage gate
@@ -194,6 +197,12 @@ make clean
 - Changes to `client.go`, `crypto.go` or the sync flow should also pass
   `make test-integration`. It starts throwaway OpenBao and Vaultwarden
   containers on ports 18200 and 18080 and removes them afterwards.
+- Changes to paths, sync behaviour, organization handling or anything the
+  `bao` CLI shows should also pass `make e2e-test`. It builds the plugin into
+  an OpenBao image, runs it against Vaultwarden over HTTPS and checks the
+  results with the Bitwarden CLI as a read-only organization member. It uses
+  ports 28200 and 28443 on localhost and takes about six minutes. See
+  [docs/e2e.md](docs/e2e.md).
 
 ## Releasing
 

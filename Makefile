@@ -25,6 +25,23 @@ cover: ## Run unit tests with coverage; fail below COVER_THRESHOLD percent
 test-integration: ## Run the docker-based integration tests (OpenBao + Vaultwarden)
 	./scripts/integration-test.sh
 
+.PHONY: e2e-up
+e2e-up: ## Start the e2e environment (OpenBao + plugin, Vaultwarden) and leave it running
+	docker compose -f e2e/compose.yaml build
+	docker compose -f e2e/compose.yaml run --rm setup
+
+.PHONY: e2e-test
+e2e-test: ## Run the end-to-end suite against a fresh e2e environment (KEEP=1 keeps it)
+	./e2e/run.sh
+
+.PHONY: e2e-shell
+e2e-shell: ## Shell with the bao and bw CLIs, connected to the e2e environment
+	docker compose -f e2e/compose.yaml run --rm tools
+
+.PHONY: e2e-down
+e2e-down: ## Remove the e2e containers and volumes
+	docker compose -f e2e/compose.yaml --profile tools down --volumes --remove-orphans
+
 .PHONY: lint
 lint: ## gofmt check, go vet, and golangci-lint when installed
 	@unformatted="$$(gofmt -l .)"; \
