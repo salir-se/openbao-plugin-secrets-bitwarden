@@ -11,7 +11,7 @@ Changes (need action from the operator), Deprecations and Bugs. See
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-03
 
 Initial public release. The code was developed in a private repository under
 the name `openbao-plugin-secrets-vaultwarden` and is published here as
