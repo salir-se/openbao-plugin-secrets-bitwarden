@@ -1,5 +1,90 @@
-# Tool versions for local development. Build, test and lint commands live in
-# the Makefile (`make help`); the Go version must match the `toolchain` line
-# in go.mod, which is what CI reads.
+# Tool versions and development tasks (https://mise.jdx.dev).
+#
+#   mise install        # Go, golangci-lint, lefthook; then registers the git hooks (lefthook.yml)
+#   mise tasks          # list the tasks below
+#   mise run cover      # run one
+#
+# CI installs the same tools from this file and runs the same tasks and the
+# scripts under scripts/, so what passes here passes there.
+#
+# The Go version must match the `toolchain` line in go.mod: CI runs with
+# GOTOOLCHAIN=local, so a mismatch fails the build instead of silently
+# downloading another toolchain.
 [tools]
 go = "1.27.1"
+golangci-lint = "2.14.0" # the version CI's golangci-lint-action runs
+lefthook = "2.1.16"
+
+[hooks]
+# Register the git hooks from lefthook.yml in this clone.
+postinstall = "lefthook install"
+
+[tasks.build]
+description = "Build a static plugin binary into bin/"
+run = '''
+version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" \
+  -o bin/openbao-plugin-secrets-bitwarden ./cmd/openbao-plugin-secrets-bitwarden
+'''
+
+[tasks.test]
+description = "Run unit tests with the race detector"
+run = "go test -race -count=1 ./..."
+
+[tasks.cover]
+description = "Run unit tests with coverage; fail below COVER_THRESHOLD percent (default 95.0)"
+run = [
+  "go test -race -covermode=atomic -coverprofile=coverage.out ./...",
+  './scripts/check-coverage.sh coverage.out "${COVER_THRESHOLD:-95.0}"',
+]
+
+[tasks.test-integration]
+description = "Run the docker-based integration tests (OpenBao + Vaultwarden)"
+run = "./scripts/integration-test.sh"
+
+[tasks.e2e-up]
+description = "Start the e2e environment (OpenBao + plugin, Vaultwarden) and leave it running"
+run = [
+  "docker compose -f e2e/compose.yaml build",
+  "docker compose -f e2e/compose.yaml run --rm setup",
+]
+
+[tasks.e2e-test]
+description = "Run the end-to-end suite against a fresh e2e environment (KEEP=1 keeps it)"
+run = "./e2e/run.sh"
+
+[tasks.e2e-shell]
+description = "Shell with the bao and bw CLIs, connected to the e2e environment"
+raw = true # interactive: pass the terminal through
+run = "docker compose -f e2e/compose.yaml run --rm tools"
+
+[tasks.e2e-down]
+description = "Remove the e2e containers and volumes"
+run = "docker compose -f e2e/compose.yaml --profile tools down --volumes --remove-orphans"
+
+[tasks.lint]
+description = "gofmt and go mod tidy checks, go vet, and golangci-lint (the same checks as CI's Lint job)"
+run = [
+  "./scripts/check-gofmt.sh",
+  "./scripts/check-go-mod-tidy.sh",
+  "go vet -tags integration,e2e ./...",
+  "golangci-lint run ./...",
+]
+
+[tasks.dco]
+description = "Check that every commit since a base (default: main) has a DCO sign-off"
+usage = 'arg "[base]" default="main" help="Revision the checked commits come after"'
+run = './scripts/check-dco.sh "$usage_base" HEAD'
+
+[tasks.sha256]
+description = "Print the binary's SHA-256 (needed for `bao plugin register`)"
+depends = ["build"]
+run = "sha256sum bin/openbao-plugin-secrets-bitwarden | cut -d' ' -f1"
+
+[tasks.hooks]
+description = "Register the git hooks from lefthook.yml in this clone (also done by `mise install`)"
+run = "lefthook install"
+
+[tasks.clean]
+description = "Remove build and test artefacts"
+run = "rm -rf bin dist coverage.out coverage.html"

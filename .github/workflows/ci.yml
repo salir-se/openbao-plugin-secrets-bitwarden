@@ -1,5 +1,9 @@
 name: CI
 
+# Jobs only orchestrate: tools come from mise.toml (jdx/mise-action), and each
+# step runs a task from mise.toml or a script from scripts/, so every check
+# here can be run locally with the same command.
+
 on:
   push:
     branches:
@@ -18,8 +22,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Use exactly the toolchain setup-go installed; never download another one.
+  # Use exactly the toolchain mise installed; never download another one.
   GOTOOLCHAIN: local
+  MISE_VERSION: 2026.10.2
 
 jobs:
   # Developer Certificate of Origin: every non-merge commit in the pull request
@@ -40,52 +45,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          lower() { tr '[:upper:]' '[:lower:]'; }
-          failed=0
-          checked=0
-          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
-            checked=$((checked + 1))
-            author="$(git show -s --format='%an <%ae>' "$sha" | lower)"
-            committer="$(git show -s --format='%cn <%ce>' "$sha" | lower)"
-            signoffs="$(git show -s --format='%(trailers:key=Signed-off-by,valueonly,unfold)' "$sha" | sed '/^[[:space:]]*$/d' | lower)"
-            subject="$(git show -s --format='%s' "$sha")"
-
-            ok=0
-            if printf '%s\n' "$signoffs" | grep -Fxq -e "$author" -e "$committer"; then
-              ok=1
-            # Dependabot authors commits as
-            #   dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
-            # but signs them off as
-            #   dependabot[bot] <support@github.com>
-            # so the trailer never matches the author. Accept exactly that pair.
-            elif [ "$author" = 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' ] &&
-              printf '%s\n' "$signoffs" | grep -Fxq 'dependabot[bot] <support@github.com>'; then
-              ok=1
-            fi
-
-            if [ "$ok" -eq 1 ]; then
-              echo "ok      ${sha:0:12} $subject"
-            else
-              failed=1
-              echo "::error::Commit ${sha:0:12} (\"$subject\") has no Signed-off-by trailer matching its author or committer."
-              echo "MISSING ${sha:0:12} $subject"
-              echo "        author:     $author"
-              echo "        committer:  $committer"
-              echo "        sign-offs:  ${signoffs:-<none>}"
-            fi
-          done
-
-          echo "Checked $checked commit(s)."
-          if [ "$failed" -ne 0 ]; then
-            echo
-            echo "Add the sign-off with 'git commit --amend --signoff' (last commit) or"
-            echo "'git rebase --signoff <base>' (whole branch), then force-push."
-            echo "The name and email in the trailer must match the commit author."
-            echo "See CONTRIBUTING.md and https://developercertificate.org/"
-            exit 1
-          fi
+        run: ./scripts/check-dco.sh "$BASE_SHA" "$HEAD_SHA"
 
   lint:
     name: Lint
@@ -96,24 +56,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
+
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-
 
       - name: gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt-formatted:"
-            echo "$unformatted"
-            gofmt -d .
-            exit 1
-          fi
+        run: ./scripts/check-gofmt.sh
 
       - name: go mod tidy is clean
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+        run: ./scripts/check-go-mod-tidy.sh
 
       - name: go vet
         run: go vet -tags integration,e2e ./...
@@ -132,25 +91,26 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
-      # `make cover` runs the race-enabled unit tests with a coverage profile
-      # and fails if total coverage drops below the project threshold
-      # (scripts/check-coverage.sh). The threshold lives in the Makefile only.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-
+
+      # The `cover` task runs the race-enabled unit tests with a coverage
+      # profile and fails below the project threshold (scripts/check-coverage.sh).
       - name: Unit tests + coverage gate
-        run: make cover
+        run: mise run cover
 
       - name: Coverage summary
         if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
-        run: |
-          {
-            echo '### Coverage'
-            echo '```'
-            go tool cover -func=coverage.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: ./scripts/coverage-summary.sh coverage.out >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
@@ -174,26 +134,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-
+
+      # Builds into dist/ and, for Linux, verifies the binary is statically linked.
       - name: Build static binary
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build -trimpath -ldflags='-s -w' \
-            -o "dist/openbao-plugin-secrets-bitwarden_${GOOS}_${GOARCH}" \
-            ./cmd/openbao-plugin-secrets-bitwarden
-
-      - name: Verify the binary is statically linked
-        if: matrix.goos == 'linux'
-        run: |
-          out="$(file "dist/openbao-plugin-secrets-bitwarden_linux_${{ matrix.goarch }}")"
-          echo "$out"
-          echo "$out" | grep -q 'statically linked'
+        run: ./scripts/build-static.sh "${{ matrix.goos }}" "${{ matrix.goarch }}"
 
   integration:
     name: Integration tests
@@ -204,14 +159,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
+
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-
 
       # Starts OpenBao + Vaultwarden from docker-compose.test.yml, runs
       # `go test -tags integration`, and tears the containers down again.
       - name: Run integration tests
-        run: ./scripts/integration-test.sh
+        run: mise run test-integration
 
   e2e:
     name: E2E tests
@@ -225,10 +188,10 @@ jobs:
       # Builds the plugin from this commit into an OpenBao image, starts it
       # next to Vaultwarden (e2e/compose.yaml), drives the plugin with the
       # `bao` CLI and checks the result with the Bitwarden CLI. Everything,
-      # including the Go build, happens in containers, so no Go toolchain is
+      # including the Go build, happens in containers, so no toolchain is
       # set up here. Containers and volumes are removed afterwards.
       - name: Run end-to-end tests
-        run: make e2e-test
+        run: ./e2e/run.sh
 
   govulncheck:
     name: govulncheck
@@ -239,11 +202,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
-      # Scans with the Go version from go.mod, i.e. the one releases are built
-      # with, so standard-library advisories are reported accurately.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-${{ runner.os }}-
+
+      # Scans with the Go version from mise.toml, i.e. the one releases are
+      # built with, so standard-library advisories are reported accurately.
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

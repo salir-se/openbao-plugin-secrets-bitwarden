@@ -26,7 +26,7 @@ finish() {
     "${COMPOSE[@]}" logs --no-color --tail=300 || true
   fi
   if [ "$KEEP" = "1" ]; then
-    info "KEEP=1: environment left running. Remove it with: make e2e-down"
+    info "KEEP=1: environment left running. Remove it with: mise run e2e-down"
   else
     info "Tearing down..."
     "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true

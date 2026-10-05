@@ -163,7 +163,7 @@ bw status           # "serverUrl" is your server
 Installing the servers and CLIs and connecting them is covered, with links to
 the official documentation, in [docs/prerequisites.md](docs/prerequisites.md).
 To try everything on one machine without installing anything but Docker, use
-the [end-to-end environment](docs/e2e.md): `make e2e-up`.
+the [end-to-end environment](docs/e2e.md): `mise run e2e-up`.
 
 ## Install
 
@@ -218,13 +218,14 @@ reference for all parameters and for the OpenBao version that introduced them.
 
 ### From source
 
-Requires the Go version named in `go.mod` or newer.
+Requires the Go version named in `go.mod` or newer, or
+[mise](https://mise.jdx.dev), which installs it from `mise.toml`.
 
 ```bash
 git clone https://github.com/salir-se/openbao-plugin-secrets-bitwarden.git
 cd openbao-plugin-secrets-bitwarden
-make build
-# equivalent:
+mise install && mise run build
+# equivalent, with your own Go:
 CGO_ENABLED=0 go build -o openbao-plugin-secrets-bitwarden ./cmd/openbao-plugin-secrets-bitwarden
 ```
 
@@ -502,19 +503,23 @@ state, is in [docs/operations.md](docs/operations.md).
 
 ## Development
 
+Tool versions, tasks and git hooks are managed with [mise](https://mise.jdx.dev)
+(`mise.toml`) and [lefthook](https://lefthook.dev) (`lefthook.yml`). Run
+`mise install` once; `mise tasks` lists the tasks.
+
 ```bash
-make build             # static plugin binary
-make test              # unit tests, no external services
-make test-integration  # OpenBao + Vaultwarden in Docker, then go test -tags integration
-make e2e-test          # the plugin loaded into a real OpenBao, checked with the bw CLI
-make e2e-up            # the same environment, left running to try things by hand
-make cover             # unit tests with the coverage gate
-make lint
-make sha256            # SHA-256 of the built binary, for bao plugin register
-make clean
+mise run build             # static plugin binary
+mise run test              # unit tests, no external services
+mise run test-integration  # OpenBao + Vaultwarden in Docker, then go test -tags integration
+mise run e2e-test          # the plugin loaded into a real OpenBao, checked with the bw CLI
+mise run e2e-up            # the same environment, left running to try things by hand
+mise run cover             # unit tests with the coverage gate
+mise run lint
+mise run sha256            # SHA-256 of the built binary, for bao plugin register
+mise run clean
 ```
 
-Unit-test coverage must stay above 95%. `make cover` enforces the threshold
+Unit-test coverage must stay above 95%. `mise run cover` enforces the threshold
 locally and CI runs the same gate, so a pull request that drops below it fails.
 
 Unit tests mock the Bitwarden API over `httptest`. Integration tests
@@ -527,7 +532,7 @@ End-to-end tests (`e2e/`, [docs/e2e.md](docs/e2e.md)) build the plugin into an
 OpenBao image, register and mount it, and start Vaultwarden behind HTTPS with
 an organization, a collection and three accounts. The suite drives the plugin
 with the `bao` CLI and checks every result with the Bitwarden CLI, logged in
-as a read-only member. `make e2e-shell` opens a shell with both CLIs.
+as a read-only member. `mise run e2e-shell` opens a shell with both CLIs.
 
 ## Contributing
 

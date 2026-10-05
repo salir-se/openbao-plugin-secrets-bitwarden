@@ -6,9 +6,10 @@ OpenBao, registered by SHA-256, mounted, and connected over HTTPS to a
 Vaultwarden server that has an organization, collections and three accounts.
 A tools container carries the `bao` and `bw` CLIs, preconfigured.
 
-Use it to run the automated suite (`make e2e-test`) or to try things by hand
-(`make e2e-up`, `make e2e-shell`). It needs Docker with Compose v2 and nothing
-else; the Go build happens in a container.
+Use it to run the automated suite (`mise run e2e-test`) or to try things by hand
+(`mise run e2e-up`, `mise run e2e-shell`). It needs Docker with Compose v2 and
+[mise](https://mise.jdx.dev) for the tasks, nothing else; the Go build happens
+in a container, and `./e2e/run.sh` works without mise.
 
 ## What is in it
 
@@ -87,19 +88,19 @@ Collections: `OpenBao Synced` (roles sync into it) and `OpenBao Secondary`.
 ## Start it
 
 ```bash
-make e2e-up       # build, start, run setup; leaves everything running
-make e2e-shell    # shell in the tools container
-make e2e-down     # remove containers and volumes
+mise run e2e-up       # build, start, run setup; leaves everything running
+mise run e2e-shell    # shell in the tools container
+mise run e2e-down     # remove containers and volumes
 ```
 
-`make e2e-up` takes about a minute on first build and prints the organization
+`mise run e2e-up` takes about a minute on first build and prints the organization
 and collection IDs. Inside the shell, `BAO_ADDR` and `BAO_TOKEN` (root) are
 set, `bw` points at the environment's server, and `E2E_ORG_ID`,
 `E2E_COLLECTION_ID` and `E2E_COLLECTION_SECONDARY_ID` hold the IDs.
 
 ## Walkthrough
 
-In `make e2e-shell`:
+In `mise run e2e-shell`:
 
 ```bash
 # The plugin is healthy and connected.
@@ -175,8 +176,8 @@ login in a real browser was not part of the test.
 ## The automated suite
 
 ```bash
-make e2e-test            # build, start, run all cases, tear down
-KEEP=1 make e2e-test     # leave the environment running afterwards
+mise run e2e-test            # build, start, run all cases, tear down
+KEEP=1 mise run e2e-test     # leave the environment running afterwards
 ```
 
 `e2e/run.sh` starts from a clean state, runs `setup`, then runs
@@ -223,7 +224,7 @@ least privilege that syncing worked with on Vaultwarden 1.35.4. The full
 table is in [recommended-setup.md](recommended-setup.md#part-1-admin-in-bitwarden).
 
 ```bash
-E2E_SYNC_MEMBER_TYPE=admin make e2e-up
+E2E_SYNC_MEMBER_TYPE=admin mise run e2e-up
 ```
 
 ## Settings
@@ -240,7 +241,7 @@ E2E_SYNC_MEMBER_TYPE=admin make e2e-up
 ## Limitations
 
 - OpenBao runs in dev mode: in-memory storage, a fixed root token, no seal.
-  A restart of the `openbao` container loses the mount; run `make e2e-up`
+  A restart of the `openbao` container loses the mount; run `mise run e2e-up`
   again (setup is idempotent).
 - Vaultwarden only. The official Bitwarden server is not part of this
   environment.

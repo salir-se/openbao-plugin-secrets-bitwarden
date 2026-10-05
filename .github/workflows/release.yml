@@ -23,8 +23,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Use exactly the toolchain setup-go installed; never download another one.
+  # Use exactly the toolchain mise installed; never download another one.
   GOTOOLCHAIN: local
+  MISE_VERSION: 2026.10.2
 
 jobs:
   # The same gate as CI, so a tag on a red commit cannot ship.
@@ -37,25 +38,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
       - name: go vet
         run: go vet -tags integration ./...
 
       - name: Unit tests + coverage gate
-        run: make cover
+        run: mise run cover
 
       - name: Coverage summary
         if: ${{ !cancelled() && hashFiles('coverage.out') != '' }}
-        run: |
-          {
-            echo '### Coverage'
-            echo '```'
-            go tool cover -func=coverage.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: ./scripts/coverage-summary.sh coverage.out >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
@@ -74,12 +69,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
       - name: Run integration tests
-        run: ./scripts/integration-test.sh
+        run: mise run test-integration
 
   # Known vulnerabilities in dependencies or the Go toolchain block a release.
   govulncheck:
@@ -91,9 +86,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
@@ -111,9 +106,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
           cache: false
 
       - name: Install syft
@@ -180,9 +175,9 @@ jobs:
           fetch-depth: 0 # full history for the changelog
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
-          go-version-file: go.mod
+          version: ${{ env.MISE_VERSION }}
           cache: false # never build a release from a restored cache
 
       - name: Install syft
