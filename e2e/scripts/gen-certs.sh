@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Writes a throwaway CA and a server certificate for Vaultwarden into the
 # compose volumes. Nothing here is ever committed: the files exist only in the
-# `tls` and `state` volumes and disappear with `make e2e-down`.
+# `tls` and `state` volumes and disappear with `mise run e2e-down`.
 #
 #   /state/ca.crt       CA certificate, for everything that must trust it
 #   /tls/server.crt     server certificate (vaultwarden, localhost, 127.0.0.1)

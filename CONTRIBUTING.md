@@ -64,8 +64,15 @@ Signed-off-by: Alex Smith <alex@example.com>
 A DCO sign-off is not the same as cryptographic commit signing with GPG or
 gitsign. Signing a commit that way does not replace the sign-off line.
 
-The `DCO sign-off` job in CI checks every commit of a pull request for the
-trailer. Commits without it are not merged.
+The `DCO sign-off` job in CI runs `scripts/check-dco.sh` on every commit of a
+pull request. Commits without the trailer are not merged. To check a branch
+before pushing, run `mise run dco` (the same script, against `main`).
+
+You do not have to remember the flag: `mise install` registers the git hooks
+from `lefthook.yml` in your clone, and the `commit-msg` hook adds the trailer
+for your committer identity, exactly as `--signoff` does. Commits you rewrite
+with `git rebase` do not pass through that hook, so use `git rebase --signoff`
+there.
 
 ## AI-assisted contributions
 
@@ -155,19 +162,26 @@ Documentation updates, test changes and refactors do not need an entry.
 
 ## Development setup
 
-You need the Go version named in `go.mod` or newer, `make`, and Docker with
-Compose v2 for the integration and end-to-end tests.
+Tool versions and the development tasks live in `mise.toml`
+([mise](https://mise.jdx.dev)). Install mise, then run `mise install` once in
+your clone: it installs Go, golangci-lint and [lefthook](https://lefthook.dev)
+and registers the git hooks from `lefthook.yml`. Docker with Compose v2 is needed for the
+integration and end-to-end tests. `mise tasks` lists every task.
 
 ```bash
-make build             # static plugin binary (CGO_ENABLED=0)
-make test              # unit tests, no external services
-make cover             # unit tests with the coverage gate
-make test-integration  # OpenBao + Vaultwarden in Docker
-make e2e-test          # plugin inside a real OpenBao, verified with the bw CLI
-make e2e-up            # same environment, left running; make e2e-shell, make e2e-down
-make lint
-make clean
+mise run build             # static plugin binary (CGO_ENABLED=0)
+mise run test              # unit tests, no external services
+mise run cover             # unit tests with the coverage gate
+mise run test-integration  # OpenBao + Vaultwarden in Docker
+mise run e2e-test          # plugin inside a real OpenBao, verified with the bw CLI
+mise run e2e-up            # same environment, left running; e2e-shell, e2e-down
+mise run lint              # gofmt, go mod tidy, go vet, golangci-lint
+mise run dco               # DCO sign-off check for the commits since main
+mise run clean
 ```
+
+CI installs the same tools from `mise.toml` and runs the same tasks and the
+scripts in `scripts/`, so each CI step has a local equivalent.
 
 ### Layout
 
@@ -181,6 +195,8 @@ make clean
 | `*_test.go` | Unit tests |
 | `integration_test.go`, `testhelpers_test.go` | Integration tests, behind the `integration` build tag |
 | `scripts/integration-test.sh`, `docker-compose.test.yml` | Integration test harness |
+| `scripts/` | The checks CI runs (DCO, gofmt, go mod tidy, coverage gate, static build) as plain scripts; `mise.toml` tasks and the workflows call them |
+| `mise.toml`, `lefthook.yml` | Tool versions, development tasks, git hooks |
 | `e2e/` | End-to-end environment and suite ([docs/e2e.md](docs/e2e.md)). `e2e/bootstrap` is Go behind the `e2e` build tag, so it stays out of the coverage gate |
 | `docs/` | Reference and operations documentation |
 
@@ -188,17 +204,17 @@ make clean
 
 - New code needs tests. A change in behaviour needs a test that fails without
   it.
-- Unit-test coverage must stay above 95%. Run `make cover` before you push. It
+- Unit-test coverage must stay above 95%. Run `mise run cover` before you push. It
   runs the unit tests and fails if coverage is below the threshold.
 - CI runs the same gate on every pull request. A pull request that drops
   coverage below the threshold fails and will not be merged.
 - Unit tests must not need network access or running services. Mock the
   Bitwarden API with `net/http/httptest`, as the existing tests do.
 - Changes to `client.go`, `crypto.go` or the sync flow should also pass
-  `make test-integration`. It starts throwaway OpenBao and Vaultwarden
+  `mise run test-integration`. It starts throwaway OpenBao and Vaultwarden
   containers on ports 18200 and 18080 and removes them afterwards.
 - Changes to paths, sync behaviour, organization handling or anything the
-  `bao` CLI shows should also pass `make e2e-test`. It builds the plugin into
+  `bao` CLI shows should also pass `mise run e2e-test`. It builds the plugin into
   an OpenBao image, runs it against Vaultwarden over HTTPS and checks the
   results with the Bitwarden CLI as a read-only organization member. It uses
   ports 28200 and 28443 on localhost and takes about six minutes. See

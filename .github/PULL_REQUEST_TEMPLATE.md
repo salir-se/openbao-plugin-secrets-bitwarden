@@ -22,7 +22,7 @@ Resolves: #
 - [ ] No code here was taken or adapted from source-available sources (BUSL, for
       example HashiCorp Vault after its licence change), from code under the
       Bitwarden License, or from AGPL/GPL-licensed sources.
-- [ ] Unit tests are added or updated, and `make cover` passes with coverage above 95%.
+- [ ] Unit tests are added or updated, and `mise run cover` passes with coverage above 95%.
 - [ ] `CHANGELOG.md` has an entry for user-visible changes, under one of: bug,
       feature, change, improvement, deprecation.
 - [ ] No secrets, tokens or real vault data appear in code, tests or logs.

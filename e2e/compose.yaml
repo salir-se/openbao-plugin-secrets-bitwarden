@@ -2,14 +2,14 @@
 # checkout, a Vaultwarden server behind HTTPS, and a tools container with the
 # `bao` and `bw` CLIs. See docs/e2e.md.
 #
-#   make e2e-up      # build, start and configure everything
-#   make e2e-shell   # interactive shell with bao + bw
-#   make e2e-test    # automated suite (e2e/run.sh)
-#   make e2e-down    # remove containers and volumes
+#   mise run e2e-up      # build, start and configure everything
+#   mise run e2e-shell   # interactive shell with bao + bw
+#   mise run e2e-test    # automated suite (e2e/run.sh)
+#   mise run e2e-down    # remove containers and volumes
 #
 # Host ports are published on 127.0.0.1 only. Override them when they are
 # taken:
-#   E2E_OPENBAO_PORT=38200 E2E_VAULTWARDEN_PORT=38443 make e2e-up
+#   E2E_OPENBAO_PORT=38200 E2E_VAULTWARDEN_PORT=38443 mise run e2e-up
 name: openbao-plugin-secrets-bitwarden-e2e
 
 # Every credential of this environment is defined here and nowhere else. They

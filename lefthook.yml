@@ -1,0 +1,18 @@
+# Git hooks for this clone, managed by lefthook (https://lefthook.dev).
+# lefthook itself comes from mise.toml; `mise install` registers these hooks
+# in .git/hooks (or run `mise run hooks`). Skip them once with
+# `git commit --no-verify`, or for a whole command with LEFTHOOK=0.
+
+# Add the DCO Signed-off-by trailer, as `git commit --signoff` would. CI
+# rejects pull requests whose commits lack it (scripts/check-dco.sh).
+commit-msg:
+  commands:
+    dco-signoff:
+      run: ./scripts/dco-signoff.sh {1}
+
+# The same formatting check CI runs, on the staged Go files only.
+pre-commit:
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: ./scripts/check-gofmt.sh {staged_files}

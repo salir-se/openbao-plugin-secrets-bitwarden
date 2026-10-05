@@ -6,7 +6,8 @@ page points at how to get there. It links to the official documentation
 instead of repeating it.
 
 To try the plugin without installing any of this, start the
-[end-to-end environment](e2e.md) with `make e2e-up`. It needs Docker only.
+[end-to-end environment](e2e.md) with `mise run e2e-up`. It needs Docker and
+[mise](https://mise.jdx.dev) only.
 
 ## Checklist
 
